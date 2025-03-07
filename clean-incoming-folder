@@ -1,0 +1,218 @@
+#!/bin/python3.10
+
+"""clean_folder.py is for processing incoming package downloads. 
+This program handles specific tasks a TA would normally complete 
+manually, such as; renaming package names, removing duplicate
+subfolders, running file_cleaner, handling zip files, and updating
+folder permissions."""
+
+import sys
+import os
+import shutil
+import subprocess
+import argparse
+import json
+from pathlib import Path
+from folder_cleaning import unzip_file, process_name
+from clean_resources import tools
+
+
+def existing_path_arg_type(value= str) -> Path:
+    """Allows only existing file path values."""
+    in_path = Path(value)
+    if in_path.exists():
+        return in_path.resolve()
+    raise argparse.ArgumentTypeError(f"Path {value!r} does not exist.")
+
+
+def resources_path(filename: str) -> Path:
+    """Return text file path from program dir."""
+    program_dir = Path(__file__).resolve().parent
+    return program_dir / "clean_resources" / filename
+
+
+def get_arg(arg) -> str:
+    """Return entered value."""
+    if arg.dir:
+        value = arg.dir
+    elif arg.path:
+        value = arg.path
+    return str(value)
+
+
+def check_for_dupe_dir(in_path: str, clean_path: str) -> bool:
+    """Compare new folder name with cleaned subfolder name."""
+    subfolder = check_contents(in_path)
+    if subfolder:
+        # Compare parent folder name to subfolder.
+        parent_dir = os.path.basename(clean_path)
+        
+        rename_subfolder(in_path, subfolder)
+        updated_sub = check_contents(in_path)
+        
+        if parent_dir == updated_sub:
+            return True
+        if parent_dir in updated_sub or updated_sub in parent_dir:
+            tools.yellow(f"Not exact match: '{parent_dir}' and '{updated_sub}'")
+            yes = tools.user_input("Consider this folder a duplicate, and continue?")
+            if yes:
+                return True
+        elif parent_dir != updated_sub:
+            print("Subfolder name does not match parent. Continuing.")
+    return False
+
+
+def remove_duplicate(in_path=str) -> str:
+    """Move subfolder to folder dir and remove
+    empty duplicate folder."""
+
+    tools.yellow("Removing duplicate folder ...")
+    remove_path = in_path + "_to_be_removed"
+    os.rename(in_path, remove_path)
+
+    # Move duplicate folder to parent folder.
+    subdir = os.listdir(remove_path)[0]
+    subfolder = os.path.join(remove_path, subdir)
+    shutil.move(subfolder, os.path.dirname(remove_path))
+
+    # Remove empty folder.
+    if len(os.listdir(remove_path)) == 0:
+        shutil.rmtree(remove_path)
+    else:
+        raise ValueError("Folder should be empty, somethings wrong...")
+        # Set for output path.
+    new_path = os.path.join(os.path.dirname(remove_path), subdir)
+    return new_path
+
+
+def check_contents(folder_path=str) -> str:
+    """Return folder contents valid."""
+    contents = [f for f in os.listdir(folder_path) if f[0] != "."]
+    
+    num_items = len(contents)
+    if num_items == 1:
+        item_path = os.path.join(folder_path, contents[0])
+        if os.path.isdir(item_path):
+            valid_subfolder = str(contents[0])
+            return valid_subfolder
+    return None
+
+
+def rename_subfolder(parent_folder=str, subfolder=str):
+    """Process and rename subfolder if necessary."""
+    subfolder_path = os.path.join(parent_folder, subfolder)
+    print(f"Found subfolder '{subfolder_path}'")
+    processed_path = process_name.main(subfolder_path)
+    
+    if subfolder_path != processed_path:
+        tools.yellow(f"Renaming subfolder '{subfolder}'.")
+        os.rename(subfolder_path, processed_path)
+
+
+def run_file_cleaner(target_path):
+    """Run file cleaner command on package."""
+    if os.path.exists(target_path):
+        print(f"Cleaning '{target_path}'")
+        os.chdir(target_path)
+        subprocess.run(["/sww/sand/bin/file_cleaner", "-ar"], check=False)
+
+
+def clipboard_copy(input_text):
+    """Copy message to clipboard with new path."""
+    process = subprocess.Popen(
+        ["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE
+    )
+    process.communicate(input_text.encode())
+    tools.green(f"Copied text to clipboard: {input_text}")
+
+
+def main():
+    try:
+        help_path = resources_path("help_messages.json")
+        with open(help_path) as file:
+            help_messages = json.load(file)
+
+        # Parse input user arguments.
+        desc = help_messages["desc"]
+        parser = argparse.ArgumentParser(description=desc)
+        group = parser.add_mutually_exclusive_group(required=True)
+
+        group.add_argument("--dir", "-d", type=existing_path_arg_type, help=help_messages["dir_help"])
+
+        group.add_argument("--path", "-p", type=existing_path_arg_type, help=help_messages["path_help"])
+        args = parser.parse_args()
+
+        input_path = get_arg(args)
+        if input_path[-1] == "/":
+            input_path = input_path[:-1]
+
+        # Create a new path with a updated dirname.
+        new_path = process_name.main(input_path)
+        folder = os.path.basename(input_path)
+        output_path = ""
+
+        # Compare user input path to new 'clean' path.
+        if input_path == new_path:
+            tools.bold(f"Input folder name '{folder}' does not need updating.")
+            print("-" * 100)
+
+            # Remove subfolder with duplicate name to parent.
+            duplicate_exists = check_for_dupe_dir(input_path, new_path)
+            if duplicate_exists:
+                output_path = remove_duplicate(input_path)
+            else:
+                output_path = input_path
+
+        elif input_path != new_path:
+            folder = os.path.basename(new_path)
+            yes_to_rename = tools.user_input(f"Rename to '{folder}' ?")
+            print("-" * 100)
+
+            if yes_to_rename:
+                duplicate_exists = check_for_dupe_dir(input_path, new_path)
+                if duplicate_exists:
+                    new_path = remove_duplicate(input_path)
+                else:
+                    os.rename(input_path, new_path)
+                output_path = new_path
+            else:
+                print("Not renaming folder. Moving on...")
+                output_path = input_path
+
+        tools.green(f"\n{output_path}")
+
+        # Run file_cleaner.
+        run_cleaner = tools.user_input("Run file_cleaner on above path?")
+        print("-" * 100)
+
+        if run_cleaner:
+            run_file_cleaner(output_path)
+
+        # Unzip any files present.
+        print('')
+        unzip_folder = tools.user_input("Unzip any archive files in path?")
+        print("-" * 100)
+
+        if unzip_folder:
+            unzip_file.main(output_path)
+
+        # Copy message with path to clipboard.
+        folder = os.path.basename(output_path)
+        output_text = (
+            f"Client package '{folder}' has finished downloading!\n{output_path}"
+        )
+        print('')
+        clipboard_copy(output_text)
+        print('')
+
+    # Error Handling.
+    except ValueError as e:
+        print(f"{e}")
+        sys.exit(0)
+
+    except FileNotFoundError as e:
+        tools.bold(f"{e}\nCheck folder 'resources', to see if file has been altered etc.")
+
+
+if __name__ == "__main__":
+    main()

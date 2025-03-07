@@ -1,0 +1,5 @@
+{
+    "desc": "Program formats folder names for Downloads. Removes duplicate folder, runs file_cleaner, and unzips any zip files found.",
+    "dir_help": "Pass folder / directory to the program on command line. You MUST change directory to parent folder of target folder. Method 1: Pass folder name in single quotes. For example: clean-incoming-folder 'PKG - Example Folder'. Method 2: Pass folder by using shift on command line to pass folder in with '\\' before special characters. For example: clean-incoming-folder PKG\\ -\\ Example\\ Folder/",
+    "path_help": "Passing full path to program to avoid changing directory to folder. For example: clean-incoming-folder '/home/user/'PKG - Example Folder/'"
+}
